@@ -8,7 +8,7 @@
  *   You must not remove this notice, or any other, from this software.
  **/
 
-package protobuf.core;
+package flatland.protobuf;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -221,6 +221,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
     }
 
     static final ConcurrentHashMap<NamingStrategy, ConcurrentHashMap<String, Object>> caches = new ConcurrentHashMap<NamingStrategy, ConcurrentHashMap<String, Object>>();
+    static final Object nullv = new Object();
 
     public Object intern(String name) {
       ConcurrentHashMap<String, Object> nameCache = caches.get(namingStrategy);
@@ -233,24 +234,57 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
       }
       Object clojureName = nameCache.get(name);
       if (clojureName == null) {
-        clojureName = namingStrategy.clojureName(name);
+        if (name == "") {
+          clojureName = nullv;
+        } else {
+          clojureName = namingStrategy.clojureName(name);
+          if (clojureName == null) {
+            clojureName = nullv;
+          }
+        }
         Object existing = nameCache.putIfAbsent(name, clojureName);
         if (existing != null) {
           clojureName = existing;
         }
       }
-      return clojureName;
+      return clojureName == nullv ? null : clojureName;
     }
 
     public Object clojureEnumValue(Descriptors.EnumValueDescriptor enum_value) {
       return intern(enum_value.getName());
     }
 
-    static final Object k_null = Keyword.intern(Symbol.intern(""));
-
     protected Object mapFieldBy(Descriptors.FieldDescriptor field) {
-      Object key = intern(field.getOptions().getExtension(Extensions.mapBy));
-      return key == k_null ? null : key;
+      return intern(field.getOptions().getExtension(Extensions.mapBy));
+    }
+
+    protected PersistentProtocolBufferMap mapValue(Descriptors.FieldDescriptor field,
+                                                   PersistentProtocolBufferMap left,
+                                                   PersistentProtocolBufferMap right) {
+      if (left == null) {
+        return right;
+      } else {
+        Object map_exists = intern(field.getOptions().getExtension(Extensions.mapExists));
+        if (map_exists != null) {
+          if (left.valAt(map_exists) == Boolean.FALSE &&
+              right.valAt(map_exists) == Boolean.TRUE) {
+            return right;
+          } else {
+            return left.append(right);
+          }
+        }
+
+        Object map_deleted = intern(field.getOptions().getExtension(Extensions.mapDeleted));
+        if (map_deleted != null) {
+          if (left.valAt(map_deleted) == Boolean.TRUE &&
+              right.valAt(map_deleted) == Boolean.FALSE) {
+            return right;
+          } else {
+            return left.append(right);
+          }
+        }
+        return left.append(right);
+      }
     }
   }
 
@@ -339,7 +373,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
     return def.getMessageType();
   }
 
-  protected DynamicMessage message() {
+  public DynamicMessage message() {
     if (message == null) {
       return def.newBuilder().build(); // This will only work if an empty message is valid.
     } else {
@@ -347,7 +381,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
     }
   }
 
-  protected DynamicMessage.Builder builder() {
+  public DynamicMessage.Builder builder() {
     if (message == null) {
       return def.newBuilder();
     } else {
@@ -365,7 +399,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
   static Keyword k_exists = Keyword.intern("exists");
 
   protected Object fromProtoValue(Descriptors.FieldDescriptor field, Object value,
-          boolean use_extensions) {
+                                  boolean use_extensions) {
     if (value instanceof List) {
       List<?> values = (List<?>)value;
       Iterator<?> iterator = values.iterator();
@@ -376,15 +410,11 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
         if (map_field_by != null) {
           ITransientMap map = (ITransientMap)OrderedMap.EMPTY.asTransient();
           while (iterator.hasNext()) {
-            PersistentProtocolBufferMap v = (PersistentProtocolBufferMap)fromProtoValue(field,
-              iterator.next());
+            PersistentProtocolBufferMap v =
+              (PersistentProtocolBufferMap)fromProtoValue(field, iterator.next());
             Object k = v.valAt(map_field_by);
             PersistentProtocolBufferMap existing = (PersistentProtocolBufferMap)map.valAt(k);
-            if (existing != null) {
-              map = map.assoc(k, existing.append(v));
-            } else {
-              map = map.assoc(k, v);
-            }
+            map = map.assoc(k, def.mapValue(field, existing, v));
           }
           return map.persistent();
         } else if (options.getExtension(Extensions.counter)) {
@@ -406,7 +436,12 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
             Object k = fromProtoValue(key_field, message.getField(key_field));
             Object v = fromProtoValue(val_field, message.getField(val_field));
             Object existing = map.valAt(k);
-            if (existing instanceof IPersistentCollection) {
+
+            if (existing instanceof PersistentProtocolBufferMap) {
+              map = map.assoc(k, def.mapValue(field,
+                                              (PersistentProtocolBufferMap)existing,
+                                              (PersistentProtocolBufferMap)v));
+            } else if (existing instanceof IPersistentCollection) {
               map = map.assoc(k, ((IPersistentCollection)existing).cons(v));
             } else {
               map = map.assoc(k, v);
@@ -446,8 +481,9 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
       switch (field.getJavaType()) {
         case ENUM:
           Descriptors.EnumValueDescriptor e = (Descriptors.EnumValueDescriptor)value;
-          if (use_extensions && field.getOptions().getExtension(Extensions.nullable)
-                  && field.getOptions().getExtension(nullExtension(field)).equals(e.getNumber())) {
+          if (use_extensions &&
+              field.getOptions().getExtension(Extensions.nullable) &&
+              field.getOptions().getExtension(nullExtension(field)).equals(e.getNumber())) {
             return null;
           } else {
             return def.clojureEnumValue(e);
@@ -465,8 +501,9 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
 
           return new PersistentProtocolBufferMap(null, fieldDef, message);
         default:
-          if (use_extensions && field.getOptions().getExtension(Extensions.nullable)
-                  && field.getOptions().getExtension(nullExtension(field)).equals(value)) {
+          if (use_extensions &&
+              field.getOptions().getExtension(Extensions.nullable) &&
+              field.getOptions().getExtension(nullExtension(field)).equals(value)) {
             return null;
           } else {
             return value;

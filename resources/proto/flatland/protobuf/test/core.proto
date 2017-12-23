@@ -1,8 +1,8 @@
-package protobuf.test.core;
+package flatland.protobuf.test.core;
 
-import "protobuf/core/extensions.proto";
+import "flatland/protobuf/extensions.proto";
 
-option java_package = "protobuf.test";
+option java_package = "flatland.protobuf.test";
 option java_outer_classname = "Core";
 
 message Foo {
@@ -36,6 +36,7 @@ message Foo {
   repeated Item  item_map  = 24 [(map_by) = "item"];
   repeated Pair  pair_map  = 25 [(map_by) = "key"];
   optional bool  deleted   = 26 [default  = false];
+  repeated Thing things = 27 [(map_by) = "id"];
 }
 
 message Bar {
@@ -94,4 +95,9 @@ message ErrorMsg {
 message Response {
   required bool ok = 1;
   optional ErrorMsg error = 2;
+}
+
+message Thing {
+  optional string id = 1;
+  optional bool marked = 2;
 }
