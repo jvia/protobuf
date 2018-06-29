@@ -11,6 +11,13 @@ message Photo {
   repeated Attr   attrs  = 4 [(map)    = true];
   repeated Tag    tags   = 5 [(map_by) = "person_id"];
   optional bytes  image  = 6;
+  optional ImageType type = 7;
+
+  enum ImageType {
+    JPG = 1;
+    PNG = 2;
+    RAW = 3;
+  }
 
   message Label {
     required string item   = 1;
