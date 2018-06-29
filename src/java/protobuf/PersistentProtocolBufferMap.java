@@ -54,6 +54,8 @@ import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.GeneratedMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 
+import static java.lang.String.format;
+
 
 public class PersistentProtocolBufferMap extends APersistentMap implements IObj {
   public static class Def {
@@ -61,12 +63,12 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
       /**
        * Given a Clojure map key, return the string to be used as the protobuf message field name.
        */
-      String protoName(Object clojureName);
+      String protoName(Descriptors.FieldDescriptor descriptor, Object clojureName);
 
       /**
        * Given a protobuf message field name, return a Clojure object suitable for use as a map key.
        */
-      Object clojureName(String protoName);
+      Object clojureName(Descriptors.FieldDescriptor descriptor, String protoName);
     }
 
     // we want this to work for anything Named, so use clojure.core/name
@@ -82,12 +84,12 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
 
     public static final NamingStrategy protobufNames = new NamingStrategy() {
       @Override
-      public String protoName(Object name) {
+      public String protoName(Descriptors.FieldDescriptor descriptor, Object name) {
         return nameStr(name);
       }
 
       @Override
-      public Object clojureName(String name) {
+      public Object clojureName(Descriptors.FieldDescriptor descriptor, String name) {
         return Keyword.intern(name.toLowerCase());
       }
 
@@ -98,12 +100,18 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
     };
     public static final NamingStrategy convertUnderscores = new NamingStrategy() {
       @Override
-      public String protoName(Object name) {
-        return nameStr(name).replaceAll("-", "_");
+      public String protoName(Descriptors.FieldDescriptor descriptor, Object name) {
+        String protoNameStr = nameStr(name).replaceAll("-", "_");
+        if (descriptor != null &&
+            descriptor.getJavaType() == Descriptors.FieldDescriptor.JavaType.ENUM) {
+          return protoNameStr.toUpperCase();
+        } else {
+          return protoNameStr;
+        }
       }
 
       @Override
-      public Object clojureName(String name) {
+      public Object clojureName(Descriptors.FieldDescriptor descriptor, String name) {
         return Keyword.intern(name.replaceAll("_", "-").toLowerCase());
       }
 
@@ -200,7 +208,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
           }
           return (Descriptors.FieldDescriptor)field;
         } else {
-          field = type.findFieldByName(namingStrategy.protoName(key));
+          field = type.findFieldByName(namingStrategy.protoName(null, key));
           key_to_field.putIfAbsent(key, field == null ? NULL : field);
         }
         return (Descriptors.FieldDescriptor)field;
@@ -236,7 +244,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
         if (name == "") {
           clojureName = nullv;
         } else {
-          clojureName = namingStrategy.clojureName(name);
+          clojureName = namingStrategy.clojureName(null, name);
           if (clojureName == null) {
             clojureName = nullv;
           }
@@ -536,7 +544,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
       case DOUBLE:
         return ((Number)value).doubleValue();
       case ENUM:
-        String name = def.namingStrategy.protoName(value);
+        String name = def.namingStrategy.protoName(field, value);
         Descriptors.EnumDescriptor enum_type = field.getEnumType();
         Descriptors.EnumValueDescriptor enum_value = enum_type.findValueByName(name);
         if (enum_value == null) {
@@ -585,7 +593,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
     try {
       builder.addRepeatedField(field, value);
     } catch (Exception e) {
-      String msg = String.format("error adding %s to %s field %s", value,
+      String msg = format("error adding %s to %s field %s", value,
         field.getJavaType().toString().toLowerCase(), field.getFullName());
       throw new IllegalArgumentException(msg, e);
     }
@@ -596,7 +604,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
     try {
       builder.setField(field, value);
     } catch (IllegalArgumentException e) {
-      String msg = String.format("error setting %s field %s to %s",
+      String msg = format("error setting %s field %s to %s",
         field.getJavaType().toString().toLowerCase(), field.getFullName(), value);
       throw new IllegalArgumentException(msg, e);
     }
@@ -626,7 +634,7 @@ public class PersistentProtocolBufferMap extends APersistentMap implements IObj 
       } else {
         Object map_field_by = def.mapFieldBy(field);
         if (map_field_by != null) {
-          String field_name = def.namingStrategy.protoName(map_field_by);
+          String field_name = def.namingStrategy.protoName(field, map_field_by);
           for (ISeq s = RT.seq(value); s != null; s = s.next()) {
             Map.Entry<?, ?> e = (Map.Entry<?, ?>)s.first();
             IPersistentMap map = (IPersistentMap)e.getValue();
